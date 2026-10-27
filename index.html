@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#050b17" />
+    <meta
+      name="description"
+      content="Juansi: Operación Presencia, un juego de realidad mixta para localizar personas en un entorno generativo."
+    />
+    <title>Juansi: Operación Presencia · Merged Reality</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23081422'/%3E%3Ccircle cx='32' cy='34' r='20' fill='%23a8d8ff'/%3E%3Ccircle cx='25' cy='32' r='5' fill='%230b1728'/%3E%3Ccircle cx='40' cy='32' r='5' fill='%230b1728'/%3E%3Ccircle cx='32' cy='11' r='5' fill='%23a8d8ff'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="ambient-grid" aria-hidden="true"></div>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-avatar"><img src="assets/juansi.png" alt="Juansi, el robot" /></div>
+          <div class="brand-copy">
+            <span class="eyebrow">Merged Reality · MR-01</span>
+            <h1>JUANSI: OPERACIÓN PRESENCIA</h1>
+          </div>
+        </div>
+
+        <div class="mission-state" id="mission-state">
+          <span class="pulse-dot"></span>
+          <span>Misión en curso</span>
+        </div>
+
+        <div class="top-actions">
+          <button class="top-button" id="camera-button" type="button" aria-pressed="false">
+            <span class="button-icon" aria-hidden="true">◉</span>
+            <span id="camera-button-label">Activar cámara</span>
+          </button>
+          <button class="icon-button" id="sound-button" type="button" aria-pressed="true" title="Activar o silenciar audio">
+            <span aria-hidden="true">♪</span>
+          </button>
+          <button class="icon-button" id="help-button" type="button" title="Cómo jugar">
+            <span aria-hidden="true">?</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="game-layout">
+        <aside class="side-panel left-panel" aria-label="Expediente y controles">
+          <section class="panel-card">
+            <div class="section-kicker"><span>01</span> EXPEDIENTE</div>
+            <div class="section-heading">
+              <h2>Personas por localizar</h2>
+              <span class="count-badge" id="found-count">0/5</span>
+            </div>
+            <div class="progress-track" aria-label="Progreso de la misión">
+              <div id="progress-fill"></div>
+            </div>
+            <div class="time-row">
+              <span>Tiempo</span>
+              <strong id="mission-time">00:00</strong>
+            </div>
+            <div class="people-list" id="people-list"></div>
+          </section>
+
+          <section class="panel-card compact-card">
+            <div class="section-kicker"><span>02</span> INTERFAZ</div>
+            <h2>Controles</h2>
+            <ul class="control-list">
+              <li><kbd>Clic</kbd><span>Mover a Juansi</span></li>
+              <li><kbd>WASD</kbd><span>Conducir el robot</span></li>
+              <li><kbd>Espacio</kbd><span>Emitir pulso de escaneo</span></li>
+              <li><kbd>H</kbd><span>Pedir una pista</span></li>
+              <li><kbd>C</kbd><span>Alternar realidad mixta</span></li>
+            </ul>
+          </section>
+        </aside>
+
+        <section class="stage-column" aria-label="Escenario de realidad mixta">
+          <div class="stage" id="stage">
+            <video id="camera-video" autoplay muted playsinline></video>
+            <div class="stage-noise" aria-hidden="true"></div>
+            <canvas id="game-canvas" aria-label="Mundo de juego interactivo"></canvas>
+
+            <div class="stage-hud stage-hud-top">
+              <div class="hud-chip reality-chip">
+                <span class="live-dot"></span>
+                <span id="reality-mode">SIMULACIÓN GENERATIVA</span>
+              </div>
+              <div class="hud-chip-group">
+                <div class="battery-chip" title="Energía de escaneo">
+                  <span>ENERGÍA</span>
+                  <div class="battery-track"><div id="battery-fill"></div></div>
+                  <strong id="battery-text">100%</strong>
+                </div>
+                <div class="hud-chip sector-chip" id="sector-label">SECTOR —</div>
+              </div>
+            </div>
+
+            <div class="environment-flash" id="environment-flash" aria-hidden="true"></div>
+
+            <div class="speech-bubble" id="speech-bubble" role="status" aria-live="polite">
+              <img src="assets/juansi.png" alt="" />
+              <div class="speech-content">
+                <div class="speech-meta">
+                  <span>JUANSI</span>
+                  <span class="mood-badge" id="mood-badge">CURIOSO</span>
+                  <span class="context-badge">RESPUESTA CONTEXTUAL</span>
+                </div>
+                <p id="speech-text">Inicializando sensores...</p>
+              </div>
+            </div>
+
+            <div class="stage-controls">
+              <div class="action-row">
+                <button class="primary-action" id="scan-button" type="button">
+                  <span class="action-symbol" aria-hidden="true">◎</span>
+                  <span>Escanear</span>
+                  <small>ESPACIO</small>
+                </button>
+                <button class="secondary-action" id="hint-button" type="button">
+                  <span aria-hidden="true">✦</span>
+                  <span>Pista <b id="hint-count">3</b></span>
+                </button>
+                <button class="secondary-action" id="regen-button" type="button">
+                  <span aria-hidden="true">↻</span>
+                  <span>Nuevo entorno</span>
+                </button>
+              </div>
+
+              <div class="dpad" aria-label="Controles direccionales">
+                <button data-direction="up" type="button" aria-label="Arriba">▲</button>
+                <button data-direction="left" type="button" aria-label="Izquierda">◀</button>
+                <button data-direction="down" type="button" aria-label="Abajo">▼</button>
+                <button data-direction="right" type="button" aria-label="Derecha">▶</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="stage-footer">
+            <div class="footer-world">
+              <span class="tiny-label">ENTORNO ACTIVO</span>
+              <strong id="footer-world-name">Generando...</strong>
+            </div>
+            <div class="footer-legend">
+              <span><i class="legend-dot robot"></i>Juansi</span>
+              <span><i class="legend-dot person"></i>Persona</span>
+              <span><i class="legend-dot signal"></i>Señal</span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="side-panel right-panel" aria-label="Entorno e interacción">
+          <section class="panel-card">
+            <div class="section-kicker"><span>03</span> MUNDO GENERADO</div>
+            <div class="section-heading">
+              <h2 id="world-name">—</h2>
+              <span class="seed-badge">#<span id="seed-label">000000</span></span>
+            </div>
+            <p class="world-description" id="world-description"></p>
+            <div class="radar-frame">
+              <canvas id="radar-canvas" aria-label="Radar de señales"></canvas>
+              <span>RADAR DE SEÑALES</span>
+            </div>
+            <div class="world-stats">
+              <div><span>Clima reactivo</span><strong id="weather-name">—</strong></div>
+              <div><span>Anomalía</span><strong id="anomaly-name">—</strong></div>
+            </div>
+            <div class="palette-row">
+              <span>PALETA VIVA</span>
+              <div id="palette-swatches"></div>
+            </div>
+          </section>
+
+          <section class="panel-card interaction-card">
+            <div class="section-kicker"><span>04</span> PRESENCIA HUMANA</div>
+            <div class="human-status" id="human-status">
+              <div class="human-orb"><span></span></div>
+              <div>
+                <strong id="human-title">Sensor en espera</strong>
+                <p id="human-detail">Activa la cámara o mueve el cursor para influir en el mundo.</p>
+              </div>
+            </div>
+            <div class="reaction-meter">
+              <div><span>Respuesta del entorno</span><strong id="reaction-value">0%</strong></div>
+              <div class="meter-track"><div id="reaction-fill"></div></div>
+            </div>
+
+            <div class="command-chips">
+              <button type="button" data-command="Juansi, escanea la zona">Escanea</button>
+              <button type="button" data-command="¿Dónde está la persona más cercana?">¿Dónde?</button>
+              <button type="button" data-command="Dame una pista">Pista</button>
+              <button type="button" data-command="Muévete a la izquierda">Izquierda</button>
+            </div>
+
+            <form class="command-form" id="command-form">
+              <input
+                id="command-input"
+                type="text"
+                maxlength="90"
+                autocomplete="off"
+                placeholder="Escribe o dicta a Juansi..."
+                aria-label="Comando para Juansi"
+              />
+              <button type="submit" aria-label="Enviar comando">➜</button>
+            </form>
+            <button class="voice-button" id="voice-button" type="button" aria-pressed="false">
+              <span aria-hidden="true">⌁</span>
+              <span id="voice-button-label">Hablar por micrófono</span>
+            </button>
+            <p class="mic-status" id="mic-status">Dictado del navegador · también puedes escribir los comandos.</p>
+          </section>
+
+          <section class="panel-card log-card">
+            <div class="section-kicker"><span>05</span> BITÁCORA VIVA</div>
+            <div id="event-log" class="event-log" aria-live="polite"></div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <div class="modal-backdrop visible" id="intro-modal" role="dialog" aria-modal="true" aria-labelledby="intro-title">
+      <div class="modal intro-modal">
+        <button class="modal-close" id="intro-skip" type="button" aria-label="Cerrar">×</button>
+        <div class="intro-hero">
+          <div class="intro-robot-wrap">
+            <div class="intro-glow"></div>
+            <img src="assets/juansi.png" alt="Juansi, un robot azul de ojos grandes" />
+          </div>
+          <div class="intro-copy">
+            <span class="eyebrow">Merged Reality · Misión 01</span>
+            <h2 id="intro-title">Hola, soy <em>Juansi</em>.</h2>
+            <p>
+              Cinco exploradores están ocultos entre tu espacio real y un mundo generado. Muévete,
+              habla y usa mi escáner: cada gesto cambia el entorno y mi respuesta.
+            </p>
+          </div>
+        </div>
+        <div class="intro-features">
+          <div><span>01</span><strong>Mundo único</strong><p>Seis sectores, clima y anomalías nacen de una semilla.</p></div>
+          <div><span>02</span><strong>Tú eres el sensor</strong><p>Cámara, voz, teclado y tacto alteran la misión.</p></div>
+          <div><span>03</span><strong>Juansi responde</strong><p>Genera pistas contextuales en texto y voz.</p></div>
+        </div>
+        <div class="modal-actions">
+          <button class="modal-secondary" id="start-simulation" type="button">Jugar en simulación</button>
+          <button class="modal-primary" id="start-camera" type="button">◉ Jugar con cámara</button>
+        </div>
+        <p class="privacy-note">
+          Las imágenes de la cámara se analizan localmente; sin permisos, la simulación funciona igual. El dictado depende de la API de voz del navegador.
+          <a href="./" target="_blank" rel="noopener">Abrir en pestaña completa ↗</a>
+        </p>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
+      <div class="modal help-modal">
+        <button class="modal-close" id="help-close" type="button" aria-label="Cerrar">×</button>
+        <span class="eyebrow">Manual de campo</span>
+        <h2 id="help-title">Cómo localizar personas</h2>
+        <ol class="help-steps">
+          <li><b>Mueve a Juansi</b> con clic, WASD, flechas o el pad direccional.</li>
+          <li><b>Escanea</b> con Espacio. Las personas reveladas brillan durante unos segundos.</li>
+          <li><b>Acércate</b> a una persona revelada para localizarla oficialmente.</li>
+          <li><b>Habla o escribe:</b> “escanea”, “pista”, “izquierda”, “derecha”, “arriba”, “abajo”, “cámara” o “nuevo mundo”.</li>
+          <li><b>Activa la cámara</b> para mezclar el mundo con tu espacio. Tu movimiento crea ondas y carga el escáner.</li>
+        </ol>
+        <div class="help-tip"><span>✦</span><p>El clima y la anomalía cambian durante la partida; Juansi adapta sus pistas a ambos.</p></div>
+        <button class="modal-primary wide" id="help-understood" type="button">Entendido</button>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="win-modal" role="dialog" aria-modal="true" aria-labelledby="win-title">
+      <div class="modal win-modal">
+        <div class="win-icon">✦</div>
+        <span class="eyebrow">Misión completada</span>
+        <h2 id="win-title">¡Todas las personas están a salvo!</h2>
+        <p id="win-summary"></p>
+        <div class="win-stats">
+          <div><strong id="win-time">00:00</strong><span>Tiempo</span></div>
+          <div><strong id="win-interactions">0</strong><span>Interacciones</span></div>
+          <div><strong id="win-world">0</strong><span>Mutaciones</span></div>
+        </div>
+        <button class="modal-primary wide" id="play-again" type="button">Generar otra misión ↗</button>
+      </div>
+    </div>
+
+    <script type="module" src="js/game.js"></script>
+  </body>
+</html>
