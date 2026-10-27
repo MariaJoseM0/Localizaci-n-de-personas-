@@ -1,6 +1,6 @@
-# Juansi: Operación Presencia
+# Anto: Operación Presencia
 
-Un juego interactivo de **realidad mixta en el navegador** protagonizado por Juansi, el robot de la imagen adjunta. El objetivo es localizar a cinco exploradores ocultos en un mundo generado procedimentalmente que se superpone al espacio real de la cámara.
+Un juego interactivo de **realidad mixta en el navegador** protagonizado por Anto, el robot de la imagen adjunta. El objetivo es localizar a cinco exploradores ocultos en un mundo generado procedimentalmente que se superpone al espacio real de la cámara.
 
 No hay dependencias externas: HTML, CSS, Canvas 2D, WebAudio, Web Speech API y `getUserMedia`.
 
@@ -27,11 +27,11 @@ http://localhost:4173/?seed=481516
 ## Cómo se juega
 
 1. Elige **Jugar en simulación** o **Jugar con cámara**.
-2. Mueve a Juansi con clic, `WASD`, flechas o el pad direccional.
+2. Mueve a Anto con clic, `WASD`, flechas o el pad direccional.
 3. Pulsa **Escanear** o `Espacio`. Las señales reveladas permanecen visibles unos segundos.
 4. Acércate a una persona revelada para localizarla oficialmente.
 5. Pide hasta tres **pistas** o escribe/dicta comandos como:
-   - `Juansi, escanea la zona`
+   - `Anto, escanea la zona`
    - `¿Dónde está la persona más cercana?`
    - `Muévete a la izquierda`
    - `Dame una pista`
@@ -45,8 +45,8 @@ Otros atajos: `H` = pista, `C` = cámara, `R` = nuevo mundo.
 
 - La cámara se usa como fondo de video y el canvas dibuja sectores, obstáculos, personas, ondas y al robot encima. La imagen original se transformó en `assets/juansi.png` con fondo transparente para integrarla como sprite.
 - La detección de presencia es **local**: diferencia de fotogramas para movimiento y `FaceDetector` del navegador cuando está disponible. No se suben imágenes ni se graban datos.
-- El micrófono usa `SpeechRecognition` si existe; si no, mide la energía sonora como interacción. La respuesta de Juansi se sintetiza con `speechSynthesis`.
-- Cada gesto, comando, clic o movimiento humano genera ondas, desplaza partículas, modifica la energía de un sector y carga el escáner. Juansi construye una respuesta nueva combinando:
+- El micrófono usa `SpeechRecognition` si existe; si no, mide la energía sonora como interacción. La respuesta de Anto se sintetiza con `speechSynthesis`.
+- Cada gesto, comando, clic o movimiento humano genera ondas, desplaza partículas, modifica la energía de un sector y carga el escáner. Anto construye una respuesta nueva combinando:
   - posición y persona más cercana;
   - sector, clima y anomalía activos;
   - energía del escáner y progreso;
