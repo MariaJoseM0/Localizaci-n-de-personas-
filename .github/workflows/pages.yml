@@ -1,0 +1,73 @@
+name: Deploy to GitHub Pages
+
+# El juego es 100 % estático (HTML, CSS, módulos ES, Canvas, WebAudio):
+# no hay paso de build, así que publicamos la raíz del repositorio.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Permisos mínimos para publicar con OIDC (sin tokens manuales).
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Un despliegue a la vez, sin cancelar el que esté en curso.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Verificar y empaquetar
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Ejecutar pruebas del núcleo
+        run: npm test # node --test, sin dependencias que instalar
+
+      - name: Configurar Pages
+        uses: actions/configure-pages@v5
+
+      - name: Empaquetar sitio estático
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          # `tar` en vez de rsync: está en cualquier runner y evita archivos sobrantes.
+          tar -c \
+            --exclude='./.git' \
+            --exclude='./.github' \
+            --exclude='./_site' \
+            --exclude='./node_modules' \
+            . | tar -x -C _site
+          touch _site/.nojekyll
+          # El juego no debe publicarse incompleto.
+          test -f _site/index.html
+          test -f _site/styles.css
+          for file in core game audio vision voice; do test -f "_site/js/$file.js"; done
+          test -f _site/assets/juansi.png
+
+      - name: Subir artefacto de Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Publicar
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Desplegar en GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
