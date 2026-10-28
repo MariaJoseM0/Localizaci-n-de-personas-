@@ -1,16 +1,27 @@
 import {
+  DIFFICULTY_ORDER,
+  applyAftershock,
+  applyExtractionPulse,
   applyMutation,
   clamp,
   composeDialogue,
+  EXCAVATION_THRESHOLD,
   createWorld,
+  decoySignal,
+  difficultyById,
   directionTo,
   distanceLabel,
+  isDifficultyUnlocked,
   isSignalBlocked,
   lerp,
   nearestMissingPerson,
+  nextDifficultyId,
   paletteColor,
   paletteCss,
+  phoneSignal,
   sectorAt,
+  signalLabel,
+  strongestSignal,
 } from "./core.js";
 import { SoundEngine } from "./audio.js";
 import { VisionSystem } from "./vision.js";
@@ -78,14 +89,36 @@ const ui = {
   winInteractions: $("win-interactions"),
   winWorld: $("win-world"),
   playAgain: $("play-again"),
+  playNext: $("play-next"),
+  winUnlock: $("win-unlock"),
+  signalHud: $("signal-hud"),
+  signalLabel: $("signal-label"),
+  signalBars: $("signal-bars"),
+  signalDetail: $("signal-detail"),
+  signalValue: $("signal-value"),
+  rubbleChip: $("rubble-chip"),
+  aftershockChip: $("aftershock-chip"),
+  aftershockBanner: $("aftershock-banner"),
+  aftershockText: $("aftershock-text"),
+  aftershockCount: $("aftershock-count"),
+  difficultyBadge: $("difficulty-badge"),
+  quakeChip: $("quake-chip"),
+  quakeName: $("quake-name"),
+  difficultyPicker: $("difficulty-picker"),
+  difficultyNote: $("difficulty-note"),
+  digButton: $("dig-button"),
 };
+
+const SIGNAL_SEGMENTS = 14;
+const SIGNAL_LOCK = EXCAVATION_THRESHOLD; // a partir de aquí el detector permite excavar
+const PROGRESS_KEY = "rafy.rescate.progress.v1";
 
 const ctx = ui.canvas.getContext("2d");
 const radarCtx = ui.radarCanvas.getContext("2d");
 const sound = new SoundEngine();
 
 const robotImage = new Image();
-robotImage.src = "assets/juansi.png";
+robotImage.src = "assets/rafy.png";
 let robotImageReady = false;
 robotImage.onload = () => { robotImageReady = true; };
 
@@ -94,7 +127,33 @@ const initialSeed = Number.isFinite(urlSeed) && urlSeed > 0
   ? urlSeed >>> 0
   : Math.floor(Math.random() * 900000) + 100000;
 
-let world = createWorld(initialSeed);
+/** Progreso guardado: niveles desbloqueados y mejores tiempos por nivel. */
+function loadProgress() {
+  const fallback = { unlocked: 1, best: {} };
+  try {
+    const raw = window.localStorage.getItem(PROGRESS_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    const unlocked = clamp(Number(parsed?.unlocked) || 1, 1, DIFFICULTY_ORDER.length);
+    const best = parsed?.best && typeof parsed.best === "object" ? parsed.best : {};
+    return { unlocked, best };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveProgress(progress) {
+  try {
+    window.localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
+  } catch {
+    // Navegación privada o almacenamiento bloqueado: seguimos sin persistir.
+  }
+}
+
+const progress = loadProgress();
+const initialDifficulty = DIFFICULTY_ORDER[progress.unlocked - 1] || "facil";
+
+let world = createWorld(initialSeed, initialDifficulty);
 let view = { w: 1, h: 1, dpr: 1 };
 let radarView = { w: 1, h: 1, dpr: 1 };
 
@@ -134,6 +193,15 @@ const state = {
   reactionLevel: 0,
   worldFlash: 0,
   lastScanSpeech: 0,
+  difficulty: initialDifficulty,
+  progress,
+  aftershocks: 0,
+  nextAftershock: Infinity,
+  aftershockVisibleUntil: 0,
+  signal: { raw: 0, display: 0, person: null, decoy: null, locked: false },
+  shakeUntil: 0,
+  lostSignals: new Set(),
+  rescueCount: 0,
   dialogue: {
     full: "Los sectores están tomando forma. Esperando a un humano...",
     shown: 999,
@@ -202,6 +270,7 @@ function setWorldPalette() {
 }
 
 function refreshWorldUI() {
+  const difficulty = difficultyById(state.difficulty);
   setWorldPalette();
   ui.worldName.textContent = world.name;
   ui.footerWorldName.textContent = `${world.name} · ${world.subtitle}`;
@@ -209,29 +278,77 @@ function refreshWorldUI() {
   ui.worldDescription.textContent = world.description;
   ui.weatherName.textContent = `${world.weather.icon} ${world.weather.name}`;
   ui.anomalyName.textContent = `${world.anomaly.icon} ${world.anomaly.name}`;
+  if (ui.quakeName) {
+    ui.quakeName.textContent = `M${world.quake.magnitude.toFixed(1)} · ${world.quake.name}`;
+  }
+  if (ui.difficultyBadge) {
+    ui.difficultyBadge.textContent = difficulty.name.toUpperCase();
+    ui.difficultyBadge.dataset.difficulty = difficulty.id;
+  }
+  if (ui.aftershockCount) ui.aftershockCount.textContent = String(world.aftershocks || 0);
+  if (ui.quakeChip) {
+    ui.quakeChip.textContent = `M${world.quake.magnitude.toFixed(1)} · ${world.aftershocks || 0} ${world.aftershocks === 1 ? "réplica" : "réplicas"}`;
+  }
 }
 
 function refreshPeopleUI() {
+  const difficulty = difficultyById(state.difficulty);
   const cards = world.people.map((person) => {
+    const digging = !person.found && person.extraction > 0;
     const card = document.createElement("div");
-    card.className = `person-card${person.found ? " found" : ""}`;
+    card.className = `person-card${person.found ? " found" : ""}${digging ? " digging" : ""}`;
     card.style.setProperty("--person-color", person.color);
 
     const avatar = document.createElement("div");
     avatar.className = "person-avatar";
-    avatar.textContent = person.found ? person.emoji : "?";
+    avatar.textContent = person.found ? person.emoji : person.phone?.lost ? "✕" : "?";
 
     const copy = document.createElement("div");
     copy.className = "person-copy";
     const name = document.createElement("strong");
-    name.textContent = person.found ? person.name : `Señal 0${person.signal}`;
+    name.textContent = person.found ? person.name : `Celular 0${person.signal}`;
     const role = document.createElement("span");
-    role.textContent = person.found ? person.quote : "Identidad enmascarada";
+    role.textContent = person.found
+      ? person.quote
+      : person.phone?.lost
+        ? "Batería agotada · última lectura"
+        : "Bajo los escombros";
     copy.append(name, role);
+
+    if (!person.found) {
+      const battery = clamp(person.phone?.battery ?? 0, 0, 1);
+      const phone = document.createElement("div");
+      phone.className = "person-phone";
+      const track = document.createElement("div");
+      track.className = "person-phone-bar";
+      const fill = document.createElement("i");
+      fill.style.width = `${Math.round(battery * 100)}%`;
+      fill.dataset.low = String(battery < 0.25);
+      track.append(fill);
+      const label = document.createElement("small");
+      label.textContent = `${Math.round(battery * 100)}%`;
+      phone.append(track, label);
+      copy.append(phone);
+
+      if (digging) {
+        const progress = document.createElement("div");
+        progress.className = "person-progress";
+        const bar = document.createElement("i");
+        bar.style.width = `${Math.round((person.extraction / difficulty.extractionPulses) * 100)}%`;
+        progress.append(bar);
+        copy.append(progress);
+      }
+    }
 
     const status = document.createElement("span");
     status.className = "person-status";
-    status.textContent = person.found ? "✓ a salvo" : "buscando";
+    status.textContent = person.found
+      ? "✓ a salvo"
+      : digging
+        ? `⛏ ${person.extraction}/${difficulty.extractionPulses}`
+        : person.phone?.lost
+          ? "sin señal"
+          : "detectando";
     card.append(avatar, copy, status);
     return card;
   });
@@ -281,6 +398,10 @@ function respond(trigger, extra = {}, options = {}) {
     found: state.found,
     total: world.people.length,
     mutations: state.mutations,
+    difficultyName: difficultyById(state.difficulty).name,
+    magnitude: world.quake.magnitude,
+    aftershocks: state.aftershocks,
+    phoneBattery: (extra.person || nearest?.person)?.phone?.battery,
     ...extra,
   });
   setDialogue(reply.text, reply.mood, reply.source);
@@ -306,6 +427,7 @@ function updateHUD(force = false) {
   if (!force && now - state.lastUiUpdate < 110) return;
   state.lastUiUpdate = now;
 
+  const difficulty = difficultyById(state.difficulty);
   ui.foundCount.textContent = `${state.found}/${world.people.length}`;
   ui.progressFill.style.width = `${(state.found / world.people.length) * 100}%`;
   ui.missionTime.textContent = formatTime(state.elapsed);
@@ -313,7 +435,19 @@ function updateHUD(force = false) {
   ui.batteryFill.style.width = `${state.charge}%`;
   ui.hintCount.textContent = state.hints;
   ui.hintButton.disabled = state.phase !== "playing" || state.hints <= 0;
-  ui.scanButton.disabled = state.phase !== "playing" || state.charge < 20;
+  ui.scanButton.disabled = state.phase !== "playing" || state.charge < difficulty.scanCost;
+  if (ui.digButton) ui.digButton.disabled = state.phase !== "playing";
+
+  if (ui.rubbleChip) ui.rubbleChip.textContent = `ESCOMBROS ${rubbleLoad()}%`;
+  if (ui.aftershockChip) {
+    const playing = state.phase === "playing" && Number.isFinite(state.nextAftershock);
+    const remaining = playing ? Math.max(0, (state.nextAftershock - now) / 1000) : null;
+    ui.aftershockChip.textContent = remaining === null ? "RÉPLICA —" : `RÉPLICA ${formatTime(remaining)}`;
+    ui.aftershockChip.classList.toggle("imminent", remaining !== null && remaining < 8);
+  }
+  if (ui.aftershockBanner && !ui.aftershockBanner.hidden && now > state.aftershockVisibleUntil) {
+    ui.aftershockBanner.hidden = true;
+  }
   ui.sectorLabel.textContent = `SECTOR · ${state.currentSector.name.toUpperCase()}`;
   ui.realityMode.textContent = state.camera ? "REALIDAD MIXTA · CÁMARA EN VIVO" : "SIMULACIÓN GENERATIVA";
   ui.cameraButton.setAttribute("aria-pressed", String(state.camera));
@@ -330,7 +464,7 @@ function updateHUD(force = false) {
 
   if (state.human.present) {
     ui.humanTitle.textContent = state.human.label;
-    ui.humanDetail.textContent = "El entorno generó una onda y Juansi está leyendo tu presencia.";
+    ui.humanDetail.textContent = "El entorno generó una onda y Rafy está leyendo tu presencia.";
   } else if (state.camera) {
     ui.humanTitle.textContent = "Cámara activa";
     ui.humanDetail.textContent = "Muévete frente a la lente para crear ondas en el mapa.";
@@ -338,6 +472,211 @@ function updateHUD(force = false) {
     ui.humanTitle.textContent = "Sensor en espera";
     ui.humanDetail.textContent = "Activa la cámara, habla o mueve el cursor para influir en el mundo.";
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Detector de celulares y excavación                                  */
+/* ------------------------------------------------------------------ */
+
+function buildSignalBars() {
+  if (!ui.signalBars) return;
+  const bars = Array.from({ length: SIGNAL_SEGMENTS }, () => document.createElement("i"));
+  ui.signalBars.replaceChildren(...bars);
+}
+
+/** Carga de escombros del mapa (0-100), para el chip y el HUD. */
+function rubbleLoad() {
+  const averageDamage = world.sectors.reduce((total, sector) => total + sector.damage, 0)
+    / Math.max(1, world.sectors.length);
+  const pieces = Math.min(1, world.rubble.length / 90);
+  return Math.round(clamp((averageDamage * 0.7 + pieces * 0.3) * 100, 0, 100));
+}
+
+function signalReading() {
+  return strongestSignal(world, state.robot, difficultyById(state.difficulty));
+}
+
+function updateSignalHud(now, dt = 0.016) {
+  if (!ui.signalBars) return;
+  const difficulty = difficultyById(state.difficulty);
+  const reading = signalReading();
+  const time = now / 1000;
+  // El detector tiembla: cuanto más difícil, más ruido sobre la señal real.
+  const flicker = 1
+    + Math.sin(time * 6.3) * difficulty.signalNoise * 0.55
+    + Math.sin(time * 2.1 + 1.7) * difficulty.signalNoise * 0.35;
+  const target = clamp(reading.strength * flicker, 0, 1);
+
+  state.signal.display = lerp(state.signal.display, target, clamp(dt * 9, 0.04, 0.65));
+  state.signal.raw = reading.strength;
+  state.signal.person = reading.person;
+  state.signal.decoy = reading.decoy;
+  state.signal.locked = Boolean(reading.person && reading.strength >= SIGNAL_LOCK);
+
+  const display = state.signal.display;
+  const meta = signalLabel(display);
+  ui.signalLabel.textContent = meta.label;
+  ui.signalLabel.dataset.tone = meta.tone;
+  ui.signalValue.textContent = `${Math.round(display * 100)}%`;
+  ui.signalBars.setAttribute("aria-valuenow", String(Math.round(display * 100)));
+  ui.signalHud.dataset.locked = String(state.signal.locked);
+
+  const lit = Math.round(display * SIGNAL_SEGMENTS);
+  Array.from(ui.signalBars.children).forEach((bar, index) => {
+    bar.classList.toggle("on", index < lit);
+    bar.dataset.band = index >= SIGNAL_SEGMENTS * 0.72 ? "high" : index >= SIGNAL_SEGMENTS * 0.42 ? "mid" : "low";
+  });
+
+  if (ui.digButton) {
+    ui.digButton.classList.toggle("locked", state.signal.locked);
+    ui.digButton.disabled = state.phase !== "playing";
+  }
+
+  if (state.signal.locked) {
+    const required = difficulty.extractionPulses;
+    const excavation = reading.person.extraction || 0;
+    ui.signalDetail.textContent = excavation > 0
+      ? `Celular 0${reading.person.signal} · excavación ${excavation}/${required}`
+      : `Celular 0${reading.person.signal} detectado · excava (E)`;
+  } else if (reading.decoy) {
+    ui.signalDetail.textContent = "Señal no confirmada · posible señuelo";
+  } else if (display > 0.16) {
+    ui.signalDetail.textContent = "Acércate más: los escombros atenúan la señal";
+  } else {
+    ui.signalDetail.textContent = "Barriendo escombros en busca de teléfonos…";
+  }
+}
+
+/** Excava en la posición actual: la mecánica central del rescate. */
+function dig(source = "button") {
+  if (state.phase !== "playing") return;
+  const now = performance.now();
+  const difficulty = difficultyById(state.difficulty);
+  const reading = signalReading();
+
+  if (!reading.person || reading.strength < SIGNAL_LOCK) {
+    if (reading.decoy) {
+      reading.decoy.exposedUntil = now + 4200;
+      addRipple(reading.decoy.x, reading.decoy.y, "rgba(255,130,155,0.85)", 1, 1);
+      addFloatingText(reading.decoy.x, reading.decoy.y - 0.02, "SEÑAL FALSA", "#ff829b");
+      sound.play("error");
+      respond("falseSignal", {}, {
+        speak: false,
+        sound: "error",
+        log: ["SEÑAL FALSA", "Celular ajeno · no hay víctima bajo la losa"],
+      });
+      return;
+    }
+    addFloatingText(state.robot.x, state.robot.y - 0.04, "SIN SEÑAL", "#7f9bb5");
+    addRipple(state.robot.x, state.robot.y, "rgba(127,155,181,0.6)", 0.7, 0.7);
+    sound.play("error");
+    respond("scanMiss", { scanCount: 0 }, {
+      speak: false,
+      sound: "error",
+      log: ["EXCAVACIÓN", "Sin señal clara bajo esta losa"],
+    });
+    return;
+  }
+
+  if (state.charge < 12) {
+    respond("lowBattery", {}, { speak: true, sound: "error", log: ["ENERGÍA", "Sin energía para excavar"] });
+    return;
+  }
+
+  const person = reading.person;
+  state.charge = clamp(state.charge - 8, 0, 100);
+  const result = applyExtractionPulse(person, difficulty);
+
+  addRipple(person.x, person.y, person.color, 1.1, 1.3);
+  addFloatingText(person.x, person.y - 0.03, `EXCAVANDO ${result.progress}/${result.required}`, person.color);
+  sound.play(source === "voice" ? "scan" : "click");
+  refreshPeopleUI();
+
+  if (result.rescued) {
+    registerRescue(person, "extraction");
+    return;
+  }
+
+  respond("extract", { person, extraction: result.progress, required: result.required }, {
+    speak: false,
+    sound: "click",
+    log: ["EXCAVACIÓN", `Celular 0${person.signal} · ${result.progress}/${result.required} pulsos`],
+  });
+  updateHUD(true);
+}
+
+/* ------------------------------------------------------------------ */
+/* Batería de los celulares y réplicas                                 */
+/* ------------------------------------------------------------------ */
+
+function updatePhones(dt) {
+  if (state.phase !== "playing") return;
+  const difficulty = difficultyById(state.difficulty);
+  for (const person of world.people) {
+    if (person.found || !person.phone) continue;
+    person.phone.battery = clamp(
+      person.phone.battery - difficulty.phoneDrain * 0.004 * (person.phone.drainScale || 1) * dt,
+      0,
+      1,
+    );
+    if (person.phone.battery <= 0.03 && !person.phone.lost) {
+      person.phone.lost = true;
+      if (!state.lostSignals.has(person.id)) {
+        state.lostSignals.add(person.id);
+        logEvent("SEÑAL PERDIDA", `Celular 0${person.signal} · batería agotada`);
+        respond("lostSignal", { person }, { speak: false, sound: "error" });
+        refreshPeopleUI();
+      }
+    }
+  }
+  for (const decoy of world.phoneDecoys) {
+    decoy.battery = clamp(decoy.battery - 0.0015 * dt, 0, 1);
+  }
+}
+
+function scheduleAftershock(now) {
+  const [min, max] = difficultyById(state.difficulty).aftershockEvery;
+  state.nextAftershock = now + (min + Math.random() * (max - min)) * 1000;
+}
+
+function triggerAftershock(now) {
+  if (state.phase !== "playing") return;
+  const difficulty = difficultyById(state.difficulty);
+  applyAftershock(world, (state.seed + Math.floor(now) + state.aftershocks * 733) >>> 0, difficulty);
+  state.aftershocks += 1;
+  state.shakeUntil = now + 700;
+  state.aftershockVisibleUntil = now + 4600;
+  state.worldFlash = Math.max(state.worldFlash, 0.9);
+  state.reactionLevel = clamp(state.reactionLevel + 0.42, 0, 1);
+  addReaction(world.quake.epicenter.x, world.quake.epicenter.y, "réplica", 1.9);
+  addFloatingText(world.quake.epicenter.x, world.quake.epicenter.y - 0.04, "¡RÉPLICA!", "#ff829b");
+
+  refreshWorldUI();
+  refreshPeopleUI();
+
+  if (ui.aftershockBanner) {
+    ui.aftershockBanner.hidden = false;
+    ui.aftershockText.textContent = `Réplica del ${world.quake.name.toLowerCase()} · escombros reacomodados y baterías más bajas`;
+  }
+
+  sound.play("world");
+  respond("aftershock", {
+    magnitude: world.quake.magnitude,
+    aftershocks: state.aftershocks,
+  }, {
+    speak: true,
+    sound: "world",
+    log: ["RÉPLICA", `Réplica del ${world.quake.name.toLowerCase()} · ${state.aftershocks} en total`],
+  });
+
+  scheduleAftershock(now);
+  updateHUD(true);
+}
+
+function checkAftershock(now) {
+  if (state.phase !== "playing") return;
+  if (!Number.isFinite(state.nextAftershock) || now < state.nextAftershock) return;
+  triggerAftershock(now);
 }
 
 function addRipple(x, y, color = paletteColor(world.palette, 0, 0.7), life = 0.8, strength = 1) {
@@ -577,14 +916,15 @@ function toggleCamera() {
 function scan(source = "button") {
   if (state.phase !== "playing") return;
   const now = performance.now();
-  if (state.charge < 20) {
+  const difficulty = difficultyById(state.difficulty);
+  if (state.charge < difficulty.scanCost) {
     respond("lowBattery", {}, { speak: true, sound: "error", log: ["ENERGÍA", "Escáner agotado"] });
     return;
   }
-  state.charge -= 22;
+  state.charge -= difficulty.scanCost;
   const weatherFactor = world.weather.scan;
   const anomalyFactor = world.anomaly.distortion;
-  const maxRadius = Math.min(view.w, view.h) * 0.44 * weatherFactor / Math.sqrt(anomalyFactor);
+  const maxRadius = Math.min(view.w, view.h) * difficulty.scanRadius * weatherFactor / Math.sqrt(anomalyFactor);
   state.pulses.push({
     x: state.robot.x,
     y: state.robot.y,
@@ -603,7 +943,12 @@ function scan(source = "button") {
       person.revealedUntil = Math.max(person.revealedUntil, now + revealTime);
       revealed += 1;
       addRipple(person.x, person.y, person.color, 1.2, 1.2);
-      addFloatingText(person.x, person.y - 0.03, `SEÑAL 0${person.signal}`, person.color);
+      addFloatingText(
+        person.x,
+        person.y - 0.03,
+        person.phone?.lost ? `ÚLTIMA LECTURA 0${person.signal}` : `CELULAR 0${person.signal}`,
+        person.color,
+      );
     }
   }
   for (const decoy of world.decoys) {
@@ -637,7 +982,8 @@ function hint() {
   if (!nearest) return;
   state.hints -= 1;
   const now = performance.now();
-  nearest.person.revealedUntil = Math.max(nearest.person.revealedUntil, now + 6200 * world.weather.reveal);
+  const revealMs = 7200 * world.weather.reveal;
+  nearest.person.revealedUntil = Math.max(nearest.person.revealedUntil, now + revealMs);
   state.hintLine = {
     from: { x: state.robot.x, y: state.robot.y },
     to: { x: nearest.person.x, y: nearest.person.y },
@@ -650,28 +996,39 @@ function hint() {
     person: nearest.person,
     direction: directionTo(state.robot, nearest.person),
     distanceLabel: distanceLabel(nearest.distance),
+    signal: phoneSignal(nearest.person, state.robot, difficultyById(state.difficulty)),
   }, {
     speak: true,
     sound: "found",
-    log: ["PISTA", `${nearest.person.name} · ${nearest.person.sector}`],
+    log: [
+      "PISTA",
+      `${nearest.person.name} · ${nearest.person.sector} · celular ${Math.round((nearest.person.phone?.battery ?? 0) * 100)}%`,
+    ],
   });
   updateHUD(true);
 }
 
-function foundPerson(person) {
-  if (person.found || state.phase !== "playing") return;
+/**
+ * Registra un rescate: contadores, efectos, diálogo y condición de victoria.
+ * Es idempotente por persona, venga de extracción o de la última lectura.
+ */
+function registerRescue(person, mode = "proximity") {
+  if (!person || state.phase !== "playing" || person.rescuedTracked) return;
   person.found = true;
+  person.rescuedTracked = true;
+  if (mode === "extraction") person.extracted = true;
   person.foundAt = performance.now();
   state.found += 1;
+  state.rescueCount += 1;
   state.charge = clamp(state.charge + 20, 0, 100);
   addConfetti(person.x, person.y, person.color);
   addReaction(person.x, person.y, "rescate", 1.4);
   addFloatingText(person.x, person.y - 0.05, `¡${person.name.toUpperCase()}!`, person.color);
   refreshPeopleUI();
-  respond("found", { person }, {
+  respond(mode === "extraction" ? "rescue" : "found", { person }, {
     speak: true,
     sound: "found",
-    log: ["LOCALIZADA", `${person.name} · ${person.role}`],
+    log: [mode === "extraction" ? "RESCATE" : "LOCALIZADA", `${person.name} · ${person.role}`],
   });
   if (state.found === world.people.length) {
     state.phase = "finishing";
@@ -679,18 +1036,66 @@ function foundPerson(person) {
   }
 }
 
+/** Rescate por proximidad (celular sin batería): solo la primera vez. */
+function foundPerson(person, mode = "proximity") {
+  registerRescue(person, mode);
+}
+
 function winMission() {
   if (state.phase === "won") return;
   state.phase = "won";
+  const difficulty = difficultyById(state.difficulty);
   ui.winTime.textContent = formatTime(state.elapsed);
   ui.winInteractions.textContent = state.interactions;
-  ui.winWorld.textContent = state.mutations;
+  ui.winWorld.textContent = state.aftershocks;
+
   const humanPhrase = state.humanEvents > 0
     ? `Registré ${state.humanEvents} señales de presencia y ${state.voiceEvents} entradas de voz.`
-    : "Tus movimientos guiaron cada lectura del radar.";
-  ui.winSummary.textContent = `Juansi y tú localizaron a las cinco personas en ${world.name}. ${humanPhrase} El mundo cambió ${state.mutations} ${state.mutations === 1 ? "vez" : "veces"} mientras jugaban.`;
+    : "Tus movimientos guiaron cada lectura del detector.";
+  ui.winSummary.textContent = `Rafy y tú rescataron a las ${world.people.length} víctimas de ${world.name} en nivel ${difficulty.name}. ${humanPhrase} Sobrevivieron a ${state.aftershocks} ${state.aftershocks === 1 ? "réplica" : "réplicas"} del sismo M${world.quake.magnitude.toFixed(1)}.`;
+
+  // Guardar el mejor tiempo y desbloquear el siguiente nivel.
+  const previous = Number(state.progress.best?.[difficulty.id]) || Infinity;
+  if (state.elapsed < previous) state.progress.best[difficulty.id] = Math.round(state.elapsed);
+  const nextId = nextDifficultyId(difficulty.id);
+  const unlock = nextId && !isDifficultyUnlocked(nextId, state.progress.unlocked)
+    ? nextId
+    : null;
+  if (unlock) {
+    state.progress.unlocked = Math.max(state.progress.unlocked, DIFFICULTY_ORDER.indexOf(unlock) + 1);
+  }
+  saveProgress(state.progress);
+  renderDifficultyPicker();
+
+  if (ui.winUnlock) {
+    if (unlock) {
+      const next = difficultyById(unlock);
+      ui.winUnlock.hidden = false;
+      ui.winUnlock.textContent = `🔓 Nivel ${next.name} desbloqueado · ${next.tagline}`;
+    } else {
+      ui.winUnlock.hidden = false;
+      ui.winUnlock.textContent = `Nivel ${difficulty.name} completado en ${formatTime(state.elapsed)} · ${difficulty.id === "extremo" ? "dominaste el protocolo completo" : "sin niveles nuevos"}`;
+    }
+  }
+  if (ui.playNext) {
+    const target = unlock || nextId;
+    ui.playNext.hidden = !target;
+    if (target) {
+      ui.playNext.dataset.difficulty = target;
+      ui.playNext.textContent = `Jugar en ${difficultyById(target).name} ↗`;
+    }
+  }
+
   ui.winModal.classList.add("visible");
-  respond("win", {}, { speak: true, sound: "win", log: ["MISIÓN", "Todas las personas están a salvo"] });
+  respond("win", {
+    magnitude: world.quake.magnitude,
+    aftershocks: state.aftershocks,
+    difficultyName: difficulty.name,
+  }, {
+    speak: true,
+    sound: "win",
+    log: ["MISIÓN", `${world.people.length} víctimas a salvo · nivel ${difficulty.name}`],
+  });
   updateHUD(true);
 }
 
@@ -700,6 +1105,8 @@ function beginMission(withCamera) {
   state.phase = "playing";
   state.startTime = performance.now();
   state.nextMutation = state.startTime + 36000 + Math.random() * 18000;
+  state.hints = difficultyById(state.difficulty).hints;
+  scheduleAftershock(state.startTime);
   sound.warm();
   respond("intro", {}, {
     speak: true,
@@ -710,13 +1117,59 @@ function beginMission(withCamera) {
   updateHUD(true);
 }
 
-function generateMission(seed = Math.floor(Math.random() * 900000) + 100000) {
+function renderDifficultyPicker() {
+  if (!ui.difficultyPicker) return;
+  for (const button of Array.from(ui.difficultyPicker.querySelectorAll("[data-difficulty]"))) {
+    const id = button.dataset.difficulty;
+    const preset = difficultyById(id);
+    const unlocked = isDifficultyUnlocked(id, state.progress.unlocked);
+    button.disabled = !unlocked;
+    button.setAttribute("aria-disabled", String(!unlocked));
+    button.setAttribute("aria-pressed", String(id === state.difficulty));
+    const small = button.querySelector("small");
+    if (small) {
+      small.textContent = unlocked ? `${preset.people} víctimas` : `${preset.people} víctimas · 🔒`;
+    }
+  }
+
+  if (!ui.difficultyNote) return;
+  const preset = difficultyById(state.difficulty);
+  const nextId = nextDifficultyId(state.difficulty);
+  const lockedNext = nextId && !isDifficultyUnlocked(nextId, state.progress.unlocked);
+  const decoys = `${preset.decoyPhones} ${preset.decoyPhones === 1 ? "señuelo" : "señuelos"}`;
+  const seconds = Math.round((preset.aftershockEvery[0] + preset.aftershockEvery[1]) / 2);
+  ui.difficultyNote.textContent = lockedNext
+    ? `${preset.name}: ${preset.tagline}. ${preset.people} víctimas · ${decoys}. Completa una misión para desbloquear ${difficultyById(nextId).name}.`
+    : `${preset.name}: ${preset.tagline}. ${preset.people} víctimas · ${decoys} · réplica cada ~${seconds} s.`;
+}
+
+/** Cambia de nivel desde la pantalla de inicio (mismo mapa, otro escenario). */
+function setDifficulty(id) {
+  if (!isDifficultyUnlocked(id, state.progress.unlocked)) return false;
+  state.difficulty = id;
+  world = createWorld(state.seed, id);
+  state.world = world;
+  state.currentSector = sectorAt(world, state.robot.x, state.robot.y);
+  state.aftershocks = 0;
+  state.hints = difficultyById(id).hints;
+  state.lostSignals = new Set();
+  state.signal = { raw: 0, display: 0, person: null, decoy: null, locked: false };
+  refreshWorldUI();
+  refreshPeopleUI();
+  renderDifficultyPicker();
+  updateHUD(true);
+  return true;
+}
+
+function generateMission(seed = Math.floor(Math.random() * 900000) + 100000, difficultyId = state.difficulty) {
   state.seed = seed >>> 0;
-  world = createWorld(state.seed);
+  state.difficulty = isDifficultyUnlocked(difficultyId, state.progress.unlocked) ? difficultyId : state.difficulty;
+  const difficulty = difficultyById(state.difficulty);
+  world = createWorld(state.seed, state.difficulty);
   state.world = world;
   state.robot = { x: 0.5, y: 0.86, tx: 0.5, ty: 0.86, facing: 1 };
   state.charge = 100;
-  state.hints = 3;
+  state.hints = difficulty.hints;
   state.found = 0;
   state.interactions = 0;
   state.humanEvents = 0;
@@ -738,11 +1191,21 @@ function generateMission(seed = Math.floor(Math.random() * 900000) + 100000) {
   state.human.present = false;
   state.human.faces = [];
   state.human.region = null;
+  state.aftershocks = 0;
+  state.lostSignals = new Set();
+  state.signal = { raw: 0, display: 0, person: null, decoy: null, locked: false };
+  state.shakeUntil = 0;
+  state.rescueCount = 0;
+  scheduleAftershock(state.startTime);
   ui.winModal.classList.remove("visible");
   ui.introModal.classList.remove("visible");
   ui.commandInput.value = "";
+  if (ui.aftershockBanner) ui.aftershockBanner.hidden = true;
+  if (ui.winUnlock) ui.winUnlock.hidden = true;
+  if (ui.playNext) ui.playNext.hidden = true;
   refreshWorldUI();
   refreshPeopleUI();
+  renderDifficultyPicker();
 
   const url = new URL(window.location.href);
   url.searchParams.set("seed", String(state.seed));
@@ -753,7 +1216,7 @@ function generateMission(seed = Math.floor(Math.random() * 900000) + 100000) {
   respond("world", {}, {
     speak: true,
     sound: "world",
-    log: ["NUEVO MUNDO", `${world.name} · semilla ${state.seed}`],
+    log: ["NUEVO ESCENARIO", `${world.name} · semilla ${state.seed} · ${difficulty.name}`],
   });
   updateHUD(true);
 }
@@ -764,12 +1227,28 @@ function processCommand(raw, source = "text") {
   const command = normalizeCommand(text);
   logEvent("COMANDO", `${source === "voice" ? "Voz" : "Texto"}: ${text.slice(0, 48)}`);
 
-  // Las acciones tienen prioridad: así "Hola Juansi, escanea" ejecuta el escaneo.
+  // Las acciones tienen prioridad: así "Hola Rafy, escanea" ejecuta el escaneo.
   if (/escan|escanea|radar|busca|buscar|sonar|pulso/.test(command)) {
     scan(source);
     return;
   }
-  if (/pista|ayuda|donde|hacia|persona mas cercana|localiza/.test(command)) {
+  if (/excav|cavar|cava|desentierr|rescata|rescat|saca|telefono|celular/.test(command)) {
+    dig(source);
+    return;
+  }
+  if (/dificultad|nivel/.test(command)) {
+    const preset = difficultyById(state.difficulty);
+    const decoys = `${preset.decoyPhones} ${preset.decoyPhones === 1 ? "señuelo" : "señuelos"}`;
+    const seconds = Math.round((preset.aftershockEvery[0] + preset.aftershockEvery[1]) / 2);
+    const text = `Nivel ${preset.name}: ${preset.people} víctimas, ${decoys} y ${preset.extractionPulses} pulsos por rescate. Las réplicas llegan cada ${seconds} segundos aproximadamente.`;
+    state.interactions += 1;
+    setDialogue(text, "ATENTO", "dificultad + sismo");
+    voice.speak(text, state.sound);
+    logEvent("NIVEL", `${preset.name} · ${preset.people} víctimas · ${decoys}`);
+    sound.play("click");
+    return;
+  }
+  if (/pista|ayuda|donde|hacia|persona mas cercana|victima mas cercana|localiza/.test(command)) {
     hint();
     return;
   }
@@ -779,7 +1258,7 @@ function processCommand(raw, source = "text") {
   if (/abajo|sur|atras|retrocede/.test(command)) { moveByDirection("down", 0.18); respondCommand(text); return; }
   if (/camara|realidad mixta|activar camara/.test(command)) { toggleCamera(); respondCommand(text); return; }
   if (/nuevo|otro|regener|mundo|semilla|reinici/.test(command)) { generateMission(); return; }
-  if (/quien|persona|explorador|estado|sector/.test(command)) {
+  if (/quien|persona|victima|atrapad|explorador|estado|sector/.test(command)) {
     const nearest = nearestMissingPerson(world, state.robot);
     respond("hint", {
       nearest,
@@ -863,13 +1342,14 @@ function checkFound(now) {
   for (const person of world.people) {
     if (person.found) continue;
     const distance = distancePixels(state.robot, person);
-    if (distance < 46) {
-      foundPerson(person);
+    // Con el celular apagado ya no hay señal: solo queda la última lectura.
+    if (person.phone?.lost && distance < 46) {
+      foundPerson(person, "proximity");
       return;
     }
-    if (now < person.revealedUntil && distance < 76) {
-      foundPerson(person);
-      return;
+    if (now < person.revealedUntil && distance < 52) {
+      // La excavación es obligatoria: aquí solo se marca la zona como visible.
+      person.revealedUntil = Math.max(person.revealedUntil, now + 2200);
     }
     if (distance < 120) {
       person.revealedUntil = Math.max(person.revealedUntil, now + 1000);
@@ -918,7 +1398,8 @@ function updateEffects(dt) {
   if (state.hintLine && performance.now() > state.hintLine.until) state.hintLine = null;
   if (state.human.present && performance.now() - state.human.lastSeen > 5000) state.human.present = false;
 
-  state.charge = clamp(state.charge + dt * (state.camera ? 3.6 : 3), 0, 100);
+  const regen = difficultyById(state.difficulty).chargeRegen;
+  state.charge = clamp(state.charge + dt * regen * (state.camera ? 1.2 : 1), 0, 100);
   state.reactionLevel = clamp(state.reactionLevel - dt * 0.038, 0, 1);
   state.worldFlash = Math.max(0, state.worldFlash - dt * 1.35);
   ui.environmentFlash.style.opacity = (state.worldFlash * 0.26).toFixed(3);
@@ -932,9 +1413,17 @@ function update(dt, now) {
   checkSector(now);
   checkFound(now);
   checkMutation(now);
+  checkAftershock(now);
+  updatePhones(dt);
   updateEffects(dt);
+  updateSignalHud(now, dt);
   updateDialogue(dt);
   updateHUD();
+
+  const shaking = now < state.shakeUntil;
+  if (shaking !== ui.stage.classList.contains("shaking")) {
+    ui.stage.classList.toggle("shaking", shaking);
+  }
 }
 
 function roundedRect(context, x, y, width, height, radius) {
@@ -1175,9 +1664,23 @@ function drawTag(x, y, text, color, alpha = 1) {
   ctx.restore();
 }
 
+function drawPhoneGlyph(x, y, scale, alpha, color) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.4;
+  roundedRect(ctx, -5 * scale, -8 * scale, 10 * scale, 16 * scale, 2.4 * scale);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.fillRect(-2.2 * scale, 4 * scale, 4.4 * scale, 1.4 * scale);
+  ctx.restore();
+}
+
 function drawPeople(now) {
   const { w, h } = view;
   const time = now / 1000;
+  const difficulty = difficultyById(state.difficulty);
   ctx.save();
   for (const person of world.people) {
     const x = person.x * w;
@@ -1196,39 +1699,147 @@ function drawPeople(now) {
     }
 
     const revealed = now < person.revealedUntil;
-    if (revealed) {
-      const remaining = (person.revealedUntil - now) / 1000;
-      const alpha = clamp(remaining / 0.9, 0.35, 1);
-      const ringRadius = 31 + Math.sin(time * 4 + person.phase) * 4;
-      ctx.strokeStyle = person.color;
-      ctx.lineWidth = 1.4;
-      ctx.globalAlpha = alpha * 0.7;
-      ctx.beginPath();
-      ctx.arc(x, y, ringRadius, 0, TAU);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      drawHumanoid(x, y, person.color, 1.15, alpha);
-      drawTag(x, y - 41, `SEÑAL 0${person.signal} · ACÉRCATE`, person.color, alpha);
-    } else {
-      const distance = distancePixels(state.robot, person);
-      const proximity = clamp(1 - distance / 210, 0, 1) * world.weather.scan;
-      const alpha = proximity * (state.camera ? 0.24 : 0.34);
-      if (alpha > 0.015) {
-        ctx.strokeStyle = person.color;
-        ctx.globalAlpha = alpha;
-        ctx.lineWidth = 1;
-        for (let ring = 0; ring < 2; ring += 1) {
-          ctx.beginPath();
-          ctx.arc(x, y, 9 + ring * 7 + Math.sin(time * 3 + person.phase + ring) * 2, 0, TAU);
-          ctx.stroke();
-        }
-        ctx.fillStyle = person.color;
+    const battery = clamp(person.phone?.battery ?? 0, 0, 1);
+    const lost = Boolean(person.phone?.lost);
+    const distance = distancePixels(state.robot, person);
+    const proximity = clamp(1 - distance / 210, 0, 1) * world.weather.scan;
+    const radioStrength = person.id === state.signal.person?.id ? state.signal.display : proximity * 0.5;
+
+    if (lost) {
+      // Celular sin batería: solo queda la última lectura punteada.
+      if (revealed) {
+        const alpha = clamp((person.revealedUntil - now) / 900, 0.3, 1);
+        ctx.save();
+        ctx.globalAlpha = alpha * 0.8;
+        ctx.setLineDash([3, 5]);
+        ctx.strokeStyle = "#7f9bb5";
+        ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.arc(x, y, 2.2, 0, TAU);
-        ctx.fill();
-        ctx.globalAlpha = 1;
+        ctx.arc(x, y, 26, 0, TAU);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+        drawTag(x, y - 40, `ÚLTIMA LECTURA 0${person.signal}`, "#9db4c8", alpha);
       }
+      continue;
     }
+
+    // Ondas del teléfono: cuantas más batería y más cerca, más anillos visibles.
+    const waveAlpha = clamp(radioStrength * 1.15, 0, 1) * (state.camera ? 0.55 : 0.8);
+    if (waveAlpha > 0.02) {
+      ctx.save();
+      ctx.strokeStyle = person.color;
+      ctx.lineWidth = 1.1;
+      const rings = 2 + Math.round(battery * 2);
+      for (let ring = 0; ring < rings; ring += 1) {
+        const phase = (time * 1.6 + person.phase + ring * 0.45) % 1;
+        ctx.globalAlpha = waveAlpha * (1 - phase) * 0.85;
+        ctx.beginPath();
+        ctx.arc(x, y, 7 + phase * 30, 0, TAU);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    if (revealed) {
+      const alpha = clamp((person.revealedUntil - now) / 900, 0.35, 1);
+      drawPhoneGlyph(x, y, 1.15, alpha, person.color);
+      drawTag(x, y - 34, `CELULAR 0${person.signal} · ${Math.round(battery * 100)}%`, person.color, alpha);
+    } else if (battery > 0.05 && proximity > 0.12) {
+      drawPhoneGlyph(x, y, 1, 0.32 + proximity * 0.4, person.color);
+    }
+
+    // Anillo de excavación en curso.
+    if (person.extraction > 0) {
+      const progress = clamp(person.extraction / difficulty.extractionPulses, 0, 1);
+      ctx.save();
+      ctx.strokeStyle = "rgba(255, 200, 110, 0.32)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, y, 26, 0, TAU);
+      ctx.stroke();
+      ctx.strokeStyle = "#ffc86e";
+      ctx.lineWidth = 3.4;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.arc(x, y, 26, -Math.PI / 2, -Math.PI / 2 + TAU * progress);
+      ctx.stroke();
+      ctx.restore();
+      drawTag(x, y + 40, `⛏ ${person.extraction}/${difficulty.extractionPulses}`, "#ffc86e", 0.95);
+    }
+  }
+  ctx.restore();
+}
+
+function drawRubble(now) {
+  const { w, h } = view;
+  ctx.save();
+  for (const piece of world.rubble) {
+    const x = piece.x * w;
+    const y = piece.y * h;
+    const width = Math.max(3, piece.w * w);
+    const height = Math.max(2, piece.h * h);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(piece.angle);
+    ctx.fillStyle = `rgba(196, 168, 140, ${0.07 + piece.shade * 0.11})`;
+    ctx.strokeStyle = `rgba(232, 212, 186, ${0.1 + piece.shade * 0.14})`;
+    ctx.lineWidth = 0.8;
+    roundedRect(ctx, -width / 2, -height / 2, width, height, 2.5);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-width * 0.28, -height * 0.18);
+    ctx.lineTo(width * 0.08, height * 0.12);
+    ctx.lineTo(-width * 0.04, height * 0.32);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Polvo suspendido durante la réplica.
+  if (now < state.shakeUntil) {
+    ctx.fillStyle = "rgba(214, 190, 160, 0.09)";
+    ctx.fillRect(0, 0, w, h);
+  }
+  ctx.restore();
+}
+
+function drawPhoneDecoys(now) {
+  const difficulty = difficultyById(state.difficulty);
+  ctx.save();
+  for (const decoy of world.phoneDecoys) {
+    const battery = clamp(decoy.battery, 0, 1);
+    if (battery <= 0.03) continue;
+    const signal = decoySignal(decoy, state.robot, difficulty);
+    const x = decoy.x * view.w;
+    const y = decoy.y * view.h;
+    const exposed = now < (decoy.exposedUntil || 0);
+    const alpha = clamp(signal * 0.9 + (exposed ? 0.5 : 0), 0, 1);
+    if (alpha < 0.03) continue;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = exposed ? "#ff829b" : "rgba(142, 189, 230, 0.85)";
+    ctx.lineWidth = 1.1;
+    for (let ring = 0; ring < 2; ring += 1) {
+      const phase = (now / 900 + decoy.phase + ring * 0.5) % 1;
+      ctx.globalAlpha = alpha * (1 - phase) * 0.7;
+      ctx.beginPath();
+      ctx.arc(x, y, 5 + phase * 18, 0, TAU);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = alpha;
+    drawPhoneGlyph(x, y, 0.85, alpha * 0.9, exposed ? "#ff829b" : "#9db4c8");
+    if (exposed) {
+      ctx.beginPath();
+      ctx.moveTo(x - 8, y - 10);
+      ctx.lineTo(x + 8, y + 10);
+      ctx.moveTo(x + 8, y - 10);
+      ctx.lineTo(x - 8, y + 10);
+      ctx.stroke();
+      drawTag(x, y - 24, "SEÑUELO", "#ff829b", 0.95);
+    }
+    ctx.restore();
   }
   ctx.restore();
 }
@@ -1612,10 +2223,12 @@ function render(now) {
   if (state.camera) drawCameraBackdrop(now);
   else drawSimulationBackground(now);
   drawSectors(now);
+  drawRubble(now);
   drawParticles(now);
   drawHintLine(now);
   drawObstacles(now);
   drawDecoys(now);
+  drawPhoneDecoys(now);
   drawPeople(now);
   drawPulses(now);
   drawReactions();
@@ -1647,9 +2260,20 @@ function bindEvents() {
   ui.helpModal.addEventListener("click", (event) => {
     if (event.target === ui.helpModal) ui.helpModal.classList.remove("visible");
   });
-  ui.playAgain.addEventListener("click", () => generateMission());
+  ui.playAgain.addEventListener("click", () => generateMission(undefined, state.difficulty));
+  if (ui.playNext) {
+    ui.playNext.addEventListener("click", () => generateMission(undefined, ui.playNext.dataset.difficulty));
+  }
+  if (ui.difficultyPicker) {
+    ui.difficultyPicker.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-difficulty]");
+      if (!button || button.disabled) return;
+      if (setDifficulty(button.dataset.difficulty)) sound.play("click");
+    });
+  }
 
   ui.scanButton.addEventListener("click", () => scan("button"));
+  ui.digButton.addEventListener("click", () => dig("button"));
   ui.hintButton.addEventListener("click", () => hint());
   ui.regenButton.addEventListener("click", () => generateMission());
   ui.cameraButton.addEventListener("click", toggleCamera);
@@ -1725,6 +2349,7 @@ function bindEvents() {
     }
     if (event.repeat) return;
     if (event.code === "Space") { event.preventDefault(); scan("keyboard"); }
+    else if (event.key.toLowerCase() === "e") dig("keyboard");
     else if (event.key.toLowerCase() === "h") hint();
     else if (event.key.toLowerCase() === "c") toggleCamera();
     else if (event.key.toLowerCase() === "r") generateMission();
@@ -1763,8 +2388,10 @@ function bindEvents() {
   }
 }
 
+buildSignalBars();
 refreshWorldUI();
 refreshPeopleUI();
+renderDifficultyPicker();
 resizeAll();
 bindEvents();
 updateHUD(true);
@@ -1773,4 +2400,5 @@ ui.speechText.textContent = state.dialogue.full;
 state.dialogue.shown = state.dialogue.full.length;
 logEvent("SISTEMA", `${world.name} generado · semilla ${state.seed}`);
 logEvent("MUNDO", `${world.weather.name} · ${world.anomaly.name}`);
+logEvent("SISMO", `M${world.quake.magnitude.toFixed(1)} · ${world.quake.name}`);
 requestAnimationFrame(loop);

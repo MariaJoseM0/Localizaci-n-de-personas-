@@ -118,7 +118,7 @@ export class VoiceSystem {
     utterance.pitch = 1.16;
     utterance.volume = 0.72;
     const voices = window.speechSynthesis.getVoices();
-    const spanishVoice = voices.find((voice) => /^es(-|_)/i.test(voice.lang)) || voices.find((voice) => /juansi|robot/i.test(voice.name));
+    const spanishVoice = voices.find((voice) => /^es(-|_)/i.test(voice.lang)) || voices.find((voice) => /rafy|robot/i.test(voice.name));
     if (spanishVoice) utterance.voice = spanishVoice;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);

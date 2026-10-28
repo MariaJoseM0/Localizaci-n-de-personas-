@@ -53,7 +53,7 @@ jobs:
           test -f _site/index.html
           test -f _site/styles.css
           for file in core game audio vision voice; do test -f "_site/js/$file.js"; done
-          test -f _site/assets/juansi.png
+          test -f _site/assets/rafy.png
 
       - name: Subir artefacto de Pages
         uses: actions/upload-pages-artifact@v5
