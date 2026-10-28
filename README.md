@@ -168,6 +168,11 @@ dominio propio. Si prefieres no usar Actions, `Settings → Pages → Deploy fro
 
 ### Si el sitio devuelve 404 o el despliegue falla
 
+Antes de nada: en el plan gratuito **GitHub Pages solo funciona en repositorios públicos**. Si el
+repositorio aparece como *Private*, el sitio se despublica y ni `Settings → Pages` ni
+`deploy-pages` funcionan. La visibilidad se cambia en
+`Settings → General → Danger Zone → Change repository visibility`.
+
 El job **Publicar** empieza comprobando la configuración real de Pages y deja el resultado en el
 resumen de la ejecución y en el issue **Diagnóstico de Pages**. Interpretación:
 
