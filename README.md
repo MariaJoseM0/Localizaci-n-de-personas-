@@ -166,11 +166,27 @@ mismo código funciona en la raíz de un dominio, bajo `usuario.github.io/reposi
 dominio propio. Si prefieres no usar Actions, `Settings → Pages → Deploy from a branch → main /
 (root)` también sirve, porque no hay nada que compilar.
 
+### Si el sitio devuelve 404 o el despliegue falla
+
+El job **Publicar** empieza comprobando la configuración real de Pages y deja el resultado en el
+resumen de la ejecución y en el issue **Diagnóstico de Pages**. Interpretación:
+
+| `GET /repos/{repo}/pages` | Qué significa | Solución |
+| --- | --- | --- |
+| `404` | El repositorio **no tiene ningún sitio de Pages activo**: `deploy-pages` no puede publicar aunque el build esté correcto | `Settings → Pages → Build and deployment → Source: GitHub Actions → Save`. Después vuelve a lanzar *Deploy to GitHub Pages* (o haz cualquier push a `main`) |
+| `200` con `"build_type": "workflow"` | La configuración es correcta: el fallo está en el despliegue, no en el origen | Revisa el paso **Desplegar en GitHub Pages** |
+| `403` | El token del workflow no puede leer la configuración | Comprueba que `permissions:` incluya `pages: write` |
+
+Si prefieres no depender de Actions, `Settings → Pages → Deploy from a branch → main / (root)`
+publica el mismo juego: todo son archivos estáticos con rutas relativas y `.nojekyll` ya está en la
+raíz.
+
 ### Problemas frecuentes
 
 | Síntoma | Causa probable | Solución |
 | --- | --- | --- |
 | El workflow falla con *Get Pages site failed* | Pages no está activo o su origen no es **GitHub Actions** | `Settings → Pages → Source: GitHub Actions` |
+| La URL publicada responde *There isn't a GitHub Pages site here* | El sitio de Pages está deshabilitado en el repositorio | Reactivarlo como se explica arriba |
 | El workflow falla con *not allowed to deploy to github-pages* | La rama no está permitida en el entorno `github-pages` | `Settings → Environments → github-pages → Deployment branches` debe incluir `main` |
 | La página queda vacía o en blanco | Se abrió el archivo con `file://` | Servir por HTTP (ver arriba) |
 | El detector no sube nunca | Estás lejos de todos los celulares o sus baterías se agotaron | Usa una pista; el nivel Fácil tiene más alcance |
