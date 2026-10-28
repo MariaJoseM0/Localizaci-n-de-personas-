@@ -1487,6 +1487,460 @@ kbd {
   text-transform: uppercase;
 }
 
+
+/* ============================================================
+   Rescate sísmico: detector de celulares, escombros y réplicas
+   ============================================================ */
+
+.difficulty-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 9px 0 10px;
+}
+
+.difficulty-chip,
+.quake-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(142, 221, 255, 0.26);
+  background: rgba(120, 233, 255, 0.1);
+  color: var(--cyan);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.difficulty-chip[data-difficulty="facil"] {
+  border-color: rgba(199, 255, 112, 0.35);
+  background: rgba(199, 255, 112, 0.1);
+  color: var(--lime);
+}
+
+.difficulty-chip[data-difficulty="dificil"] {
+  border-color: rgba(255, 200, 110, 0.4);
+  background: rgba(255, 200, 110, 0.12);
+  color: #ffc86e;
+}
+
+.difficulty-chip[data-difficulty="extremo"] {
+  border-color: rgba(255, 130, 155, 0.45);
+  background: rgba(255, 130, 155, 0.14);
+  color: var(--coral);
+}
+
+.quake-chip {
+  border-color: rgba(181, 149, 255, 0.3);
+  background: rgba(181, 149, 255, 0.1);
+  color: var(--violet);
+}
+
+/* --- Detector de celulares --- */
+
+.signal-hud {
+  position: absolute;
+  z-index: 7;
+  left: 18px;
+  top: 96px;
+  width: min(268px, calc(100% - 36px));
+  padding: 10px 12px 11px;
+  border: 1px solid rgba(142, 221, 255, 0.22);
+  border-radius: 13px;
+  background: rgba(4, 13, 27, 0.72);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.34);
+  pointer-events: none;
+}
+
+.signal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.signal-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dim);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.signal-wave {
+  color: var(--cyan);
+  font-size: 11px;
+  animation: signalPulse 1.9s ease-in-out infinite;
+}
+
+.signal-hud[data-locked="true"] .signal-wave {
+  animation-duration: 0.55s;
+}
+
+@keyframes signalPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
+.signal-head strong {
+  color: var(--dim);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-head strong[data-tone="weak"] { color: #7f9bb5; }
+.signal-head strong[data-tone="mid"] { color: var(--violet); }
+.signal-head strong[data-tone="good"] { color: var(--lime); }
+.signal-head strong[data-tone="strong"] {
+  color: var(--coral);
+  text-shadow: 0 0 14px rgba(255, 130, 155, 0.7);
+}
+
+.signal-bars {
+  display: grid;
+  grid-template-columns: repeat(14, 1fr);
+  gap: 3px;
+  margin: 9px 0 7px;
+  height: 16px;
+}
+
+.signal-bars i {
+  border-radius: 2px;
+  background: rgba(142, 189, 230, 0.14);
+  transition: background 120ms linear, box-shadow 120ms linear, transform 120ms linear;
+}
+
+.signal-bars i.on {
+  background: var(--cyan);
+  box-shadow: 0 0 10px rgba(120, 233, 255, 0.5);
+  transform: scaleY(1.06);
+}
+
+.signal-bars i.on[data-band="high"] {
+  background: var(--coral);
+  box-shadow: 0 0 12px rgba(255, 130, 155, 0.62);
+}
+
+.signal-bars i.on[data-band="mid"] {
+  background: var(--violet);
+  box-shadow: 0 0 12px rgba(181, 149, 255, 0.55);
+}
+
+.signal-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--dim);
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+
+.signal-value {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.rubble-chip {
+  color: #ffc86e;
+  border-color: rgba(255, 200, 110, 0.28);
+  background: rgba(255, 200, 110, 0.1);
+}
+
+.aftershock-chip {
+  color: var(--coral);
+  border-color: rgba(255, 130, 155, 0.3);
+  background: rgba(255, 130, 155, 0.1);
+  font-variant-numeric: tabular-nums;
+}
+
+.aftershock-chip.imminent {
+  animation: chipAlarm 0.9s ease-in-out infinite;
+}
+
+@keyframes chipAlarm {
+  50% { background: rgba(255, 130, 155, 0.3); }
+}
+
+/* --- Aviso de réplica --- */
+
+.aftershock-banner {
+  position: absolute;
+  z-index: 9;
+  left: 50%;
+  top: 88px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 17px 11px 14px;
+  border: 1px solid rgba(255, 130, 155, 0.62);
+  border-radius: 14px;
+  background: rgba(46, 8, 18, 0.9);
+  box-shadow: 0 18px 46px rgba(255, 60, 100, 0.26);
+  transform: translateX(-50%);
+  animation: bannerIn 260ms ease-out;
+  pointer-events: none;
+}
+
+.aftershock-banner[hidden] { display: none; }
+
+.aftershock-icon {
+  font-size: 21px;
+  color: var(--coral);
+  animation: bannerShake 0.55s ease-in-out infinite;
+}
+
+.aftershock-banner strong {
+  display: block;
+  color: var(--coral);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+}
+
+.aftershock-banner small {
+  display: block;
+  margin-top: 3px;
+  color: #ffd9df;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+@keyframes bannerIn {
+  from { opacity: 0; transform: translate(-50%, -10px); }
+}
+
+@keyframes bannerShake {
+  0%, 100% { transform: translate(0, 0) rotate(0); }
+  25% { transform: translate(-1.5px, 1px) rotate(-7deg); }
+  75% { transform: translate(1.5px, -1px) rotate(7deg); }
+}
+
+.stage.shaking {
+  animation: stageQuake 620ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+@keyframes stageQuake {
+  0%, 100% { transform: translate(0, 0); }
+  10% { transform: translate(-6px, 3px); }
+  25% { transform: translate(5px, -4px); }
+  40% { transform: translate(-4px, -2px); }
+  55% { transform: translate(4px, 3px); }
+  70% { transform: translate(-2px, 2px); }
+  85% { transform: translate(2px, -1px); }
+}
+
+/* --- Progreso de excavación en las tarjetas --- */
+
+.person-card.digging {
+  opacity: 1;
+  border-color: rgba(255, 200, 110, 0.34);
+  background: linear-gradient(90deg, rgba(255, 200, 110, 0.09), rgba(12, 28, 46, 0.7));
+}
+
+.person-phone {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.person-phone-bar {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  border-radius: 99px;
+  background: rgba(142, 189, 230, 0.16);
+  overflow: hidden;
+}
+
+.person-phone-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 50%;
+  border-radius: 99px;
+  background: var(--lime);
+  transition: width 400ms ease;
+}
+
+.person-phone-bar i[data-low="true"] { background: var(--coral); }
+
+.person-phone small {
+  color: var(--dim);
+  font-size: 8.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.person-progress {
+  margin-top: 4px;
+  height: 3px;
+  border-radius: 99px;
+  background: rgba(255, 200, 110, 0.16);
+  overflow: hidden;
+}
+
+.person-progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 99px;
+  background: #ffc86e;
+  transition: width 300ms ease;
+}
+
+.dig-action {
+  border-color: rgba(255, 200, 110, 0.34);
+}
+
+.dig-action span:first-child {
+  color: #ffc86e;
+}
+
+.dig-action.locked {
+  border-color: rgba(255, 130, 155, 0.6);
+  box-shadow: 0 0 0 1px rgba(255, 130, 155, 0.35), 0 0 24px rgba(255, 130, 155, 0.2);
+}
+
+/* --- Selector de dificultad --- */
+
+.difficulty-picker {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 7px;
+  margin: 18px 0 8px;
+}
+
+.difficulty-picker button {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 6px;
+  border: 1px solid rgba(142, 189, 230, 0.18);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  cursor: pointer;
+  text-align: center;
+  transition: 160ms ease;
+}
+
+.difficulty-picker button strong {
+  color: var(--text);
+  font-size: 11.5px;
+}
+
+.difficulty-picker button small {
+  color: var(--dim);
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+}
+
+.difficulty-picker button:hover:not(:disabled) {
+  border-color: rgba(120, 233, 255, 0.4);
+  background: rgba(120, 233, 255, 0.08);
+}
+
+.difficulty-picker button[aria-pressed="true"] {
+  border-color: rgba(120, 233, 255, 0.6);
+  background: linear-gradient(180deg, rgba(120, 233, 255, 0.22), rgba(120, 233, 255, 0.07));
+  box-shadow: 0 0 22px rgba(120, 233, 255, 0.16);
+}
+
+.difficulty-picker button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.difficulty-note {
+  margin: 0 0 4px;
+  color: var(--dim);
+  font-size: 10.5px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.win-unlock {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border: 1px solid rgba(199, 255, 112, 0.4);
+  border-radius: 11px;
+  background: rgba(199, 255, 112, 0.1);
+  color: var(--lime);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.win-actions {
+  display: flex;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.win-actions > button {
+  flex: 1;
+}
+
+.win-actions .modal-primary.wide,
+.win-actions .modal-secondary {
+  width: 100%;
+}
+
+.legend-dot.rubble {
+  border-radius: 2px;
+  transform: rotate(45deg);
+  background: rgba(255, 200, 110, 0.75);
+}
+
+@media (max-width: 1320px) {
+  /* El contador de escombros ya vive en el expediente y en el radar. */
+  .rubble-chip { display: none; }
+}
+
+@media (max-width: 1120px) {
+  .signal-hud { width: min(230px, calc(100% - 36px)); }
+  .sector-chip { display: none; }
+}
+
+@media (max-width: 780px) {
+  .aftershock-chip { display: none; }
+}
+
+@media (max-width: 780px) {
+  .signal-hud {
+    top: auto;
+    bottom: 150px;
+    left: 12px;
+    width: min(212px, calc(100% - 120px));
+    padding: 8px 10px 9px;
+  }
+  .signal-bars { height: 13px; gap: 2px; }
+  .signal-foot { font-size: 8.5px; }
+  .aftershock-banner { top: 74px; padding: 9px 13px; }
+  .difficulty-picker { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 540px) {
+  .signal-hud {
+    bottom: 168px;
+    width: calc(100% - 24px);
+    left: 12px;
+  }
+  .aftershock-banner { width: calc(100% - 24px); left: 12px; transform: none; }
+  .aftershock-banner small { font-size: 9px; }
+  .win-actions { flex-direction: column; }
+}
+
 @media (max-width: 1320px) {
   .game-layout {
     grid-template-columns: minmax(220px, 250px) minmax(470px, 1fr) minmax(230px, 260px);

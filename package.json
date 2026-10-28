@@ -1,9 +1,9 @@
 {
-  "name": "juansi-operacion-presencia",
+  "name": "rafy-operacion-presencia",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Juego de realidad mixta en el navegador: localiza personas con Juansi en un entorno generativo.",
+  "description": "Juego de realidad mixta en el navegador: rescata víctimas de un terremoto detectando sus celulares bajo los escombros con Rafy.",
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs",
