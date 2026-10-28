@@ -34,8 +34,9 @@ jobs:
       - name: Ejecutar pruebas del núcleo
         run: npm test # node --test, sin dependencias que instalar
 
-      - name: Configurar Pages
-        uses: actions/configure-pages@v6
+      # Sin actions/configure-pages: el sitio ya está publicado con
+      # build_type "workflow", todas las rutas son relativas y no se consume
+      # ninguno de sus outputs. upload-pages-artifact + deploy-pages bastan.
 
       - name: Empaquetar sitio estático
         run: |
