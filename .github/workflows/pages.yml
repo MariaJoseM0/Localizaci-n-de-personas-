@@ -12,6 +12,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  issues: write # solo para dejar el diagnóstico de Pages en un issue legible
 
 # Un despliegue a la vez, sin cancelar el que esté en curso.
 concurrency:
@@ -70,6 +71,66 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Cuando el despliegue falla, la causa suele estar en la configuración de
+      # Pages (sitio deshabilitado, origen distinto de "GitHub Actions"…), y los
+      # logs del runner no siempre están disponibles. Este paso consulta la API y
+      # deja el resultado en el resumen del job y en el issue "Diagnóstico de Pages".
+      - name: Diagnosticar el estado de Pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          api="https://api.github.com/repos/$REPO"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
+
+          code_pages=$(curl -sS -o /tmp/pages.json -w '%{http_code}' "${auth[@]}" "$api/pages" || echo 000)
+          code_site=$(curl -sS -o /dev/null -w '%{http_code}' "https://${REPO%%/*}.github.io/${REPO##*/}/" || echo 000)
+          pages_json=$(head -c 1500 /tmp/pages.json 2>/dev/null || echo '{}')
+
+          {
+            echo "## Diagnóstico de GitHub Pages"
+            echo ""
+            echo "| consulta | resultado |"
+            echo "| --- | --- |"
+            echo "| \`GET /repos/$REPO/pages\` | $code_pages |"
+            echo "| sitio publicado | $code_site |"
+            echo ""
+            echo '```json'
+            echo "$pages_json"
+            echo '```'
+            if [ "$code_pages" = "404" ]; then
+              echo ""
+              echo "> :warning: Pages no está habilitado en este repositorio."
+              echo "> Settings → Pages → *Source*: **GitHub Actions** y vuelve a ejecutar el workflow."
+            elif [ "$code_pages" = "403" ]; then
+              echo ""
+              echo "> :warning: El token del workflow no puede leer la configuración de Pages."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "GET /pages → $code_pages"
+          echo "Sitio → $code_site"
+          echo "$pages_json"
+
+          # Deja rastro legible fuera del runner (los logs no siempre se pueden descargar).
+          body=$(printf 'Ejecución %s\n\n- `GET /pages` → **%s**\n- sitio: **%s**\n\n```json\n%s\n```\n' \
+            "$RUN_ID" "$code_pages" "$code_site" "$pages_json")
+          numero=$(gh api "$api/issues?state=open&per_page=100" -H "Accept: application/vnd.github+json" \
+            --jq '[.[] | select(.title == "Diagnóstico de Pages")][0].number // empty' 2>/dev/null || true)
+          if [ -n "$numero" ]; then
+            gh api -X POST "$api/issues/$numero/comments" -f body="$body" >/dev/null 2>&1 || true
+          else
+            gh api -X POST "$api/issues" -f title="Diagnóstico de Pages" -f body="$body" >/dev/null 2>&1 || true
+          fi
+
+          # Si el sitio no existe, el despliegue va a fallar igual: mejor un mensaje claro.
+          if [ "$code_pages" = "404" ]; then
+            echo "::error title=Pages deshabilitado::El repositorio no tiene un sitio de Pages activo. Actívalo en Settings → Pages → Source: GitHub Actions y vuelve a ejecutar este workflow."
+            exit 1
+          fi
+
       - name: Desplegar en GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
