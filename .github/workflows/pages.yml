@@ -24,19 +24,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Configurar Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
 
       - name: Ejecutar pruebas del núcleo
         run: npm test # node --test, sin dependencias que instalar
 
-      # Sin actions/configure-pages: el sitio ya está publicado con
-      # build_type "workflow", todas las rutas son relativas y no se consume
-      # ninguno de sus outputs. upload-pages-artifact + deploy-pages bastan.
+      # Sin actions/configure-pages: no consumimos ninguno de sus outputs y
+      # el sitio ya está publicado con build_type "workflow".
+      # Versiones fijadas a la combinación que despliega correctamente en este
+      # repositorio (los majors nuevos fallaron en configure-pages y deploy-pages).
 
       - name: Empaquetar sitio estático
         run: |
@@ -57,7 +58,7 @@ jobs:
           test -f _site/assets/rafy.png
 
       - name: Subir artefacto de Pages
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@v3
         with:
           path: _site
 
@@ -71,4 +72,4 @@ jobs:
     steps:
       - name: Desplegar en GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@v4
